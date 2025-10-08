@@ -1,0 +1,8 @@
+[
+{
+  "directory": "/Users/sahajjhajharia/stuff/build",
+  "command": "/usr/bin/clang++ -I/Users/sahajjhajharia/stuff/ml-skel/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined -o CMakeFiles/ml_skel.dir/src/main.cpp.o -c /Users/sahajjhajharia/stuff/ml-skel/src/main.cpp",
+  "file": "/Users/sahajjhajharia/stuff/ml-skel/src/main.cpp",
+  "output": "/Users/sahajjhajharia/stuff/build/CMakeFiles/ml_skel.dir/src/main.cpp.o"
+}
+]
