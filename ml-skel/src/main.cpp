@@ -7,7 +7,7 @@ int main() {
   // The timer prints automatically when it leaves scope. That’s RAII.
   {
     RaiiTimer t("warmup");
-    volatile int sink = 0;
+    volatile long long sink = 0;
     for (int i = 0; i < 1'000'000; ++i) sink += i;
   }
 
