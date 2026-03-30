@@ -40,7 +40,7 @@ class MatchResult:
     @property
     def delta(self) -> Optional[float]:
         """Calculate the amount delta."""
-        if self.bank_amount is None:
+        if self.bank_amount is None or self.our_amount is None:
             return None
         return self.our_amount - self.bank_amount
 
