@@ -159,7 +159,9 @@ def print_summary(results: List[MatchResult]) -> None:
 
     match_type_counts = {
         config.MATCH_TYPE_ID: 0,
+        config.MATCH_TYPE_AMOUNT_DATE: 0,
         config.MATCH_TYPE_SEMANTIC: 0,
+        config.MATCH_TYPE_AMOUNT_ONLY: 0,
         config.MATCH_TYPE_NONE: 0
     }
 
@@ -174,9 +176,11 @@ def print_summary(results: List[MatchResult]) -> None:
     print("="*80)
 
     print("\nMatch Type Breakdown:")
-    print(f"  ID Matches:       {match_type_counts[config.MATCH_TYPE_ID]:>6}")
-    print(f"  Semantic Matches: {match_type_counts[config.MATCH_TYPE_SEMANTIC]:>6}")
-    print(f"  No Match:         {match_type_counts[config.MATCH_TYPE_NONE]:>6}")
+    print(f"  ID Matches:           {match_type_counts[config.MATCH_TYPE_ID]:>6}")
+    print(f"  Amount+Date Matches:  {match_type_counts[config.MATCH_TYPE_AMOUNT_DATE]:>6}")
+    print(f"  Semantic Matches:     {match_type_counts[config.MATCH_TYPE_SEMANTIC]:>6}")
+    print(f"  Amount-Only Matches:  {match_type_counts[config.MATCH_TYPE_AMOUNT_ONLY]:>6}")
+    print(f"  No Match:             {match_type_counts[config.MATCH_TYPE_NONE]:>6}")
 
     print("\nStatus Breakdown:")
     print(f"  MATCHED:        {status_counts[config.STATUS_MATCHED]:>6} (amounts agree)")

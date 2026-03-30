@@ -1,28 +1,53 @@
 # Inter-Party Book Reconciliation Engine - MVP
 
-A Python-based CLI tool for reconciling trade/transaction books between professional services firms and their bank clients. Uses intelligent ID-first matching with semantic similarity fallback.
+A Python-based CLI tool for reconciling trade/transaction books between professional services firms and their bank clients. Uses intelligent multi-strategy matching with smart column detection.
 
 ## Overview
 
-This engine reconciles two CSV files (firm's book vs. bank's book) using a two-phase matching strategy:
+This engine reconciles two CSV files (firm's book vs. bank's book) using a **5-phase matching pipeline** that handles real-world scenarios like mismatched IDs, generic descriptions, and varying column names.
 
-1. **Phase 1: ID Matching** - Attempts exact match on normalized reference/trade IDs
-2. **Phase 2: Semantic Matching** - Falls back to semantic similarity on descriptions for unmatched records
-3. **Amount Validation** - Treats amounts as a hard constraint (exact match required, not a scoring weight)
+### Matching Pipeline
 
-## Features
+1. **Phase 1: ID Matching** - Exact match on normalized reference/trade IDs
+2. **Phase 2: Amount + Date Matching** - Match by exact amount with date proximity (NEW!)
+3. **Phase 3: Semantic Matching** - Match using AI-powered description similarity
+4. **Phase 4: Amount-Only Matching** - Single amount matches within date window (with warnings)
+5. **Phase 5: Mark Unmatched** - Identify records with no counterpart
 
-- **Intelligent ID Normalization**: Strips whitespace, lowercases, removes separators (`-`, `_`, `.`)
-- **Semantic Similarity**: Uses sentence-transformers (`all-MiniLM-L6-v2`) for description matching
-- **Break Classification**:
-  - `MATCHED` - Match found, amounts agree
-  - `BREAK` - Match found, amounts differ
-  - `UNMATCHED_OURS` - In firm's book only
-  - `UNMATCHED_BANK` - In bank's book only
+### Why Multiple Strategies?
+
+Real-world reconciliation data often has:
+- ✅ **Different ID schemes** (e.g., "V001" vs "B001") - Amount+Date catches these
+- ✅ **Generic descriptions** (e.g., "Auto generated transaction 1") - Amount+Date works when semantic fails
+- ✅ **Varying column names** - Smart detection handles "amount", "amount_inr", "value", etc.
+- ✅ **Off-by-one dates** - Date proximity scoring handles processing delays
+
+## Key Features
+
+### Smart Column Detection
+- **Content-based analysis**: Analyzes data patterns, not just column names
+- **Zero manual configuration**: Automatically detects ID, amount, description, and date columns
+- **Confidence scoring**: Reports detection confidence for each column
+- **Fallback to name matching**: Uses configured column name lists if content analysis is inconclusive
+
+### Multi-Strategy Matching
+- **ID Normalization**: Strips whitespace, lowercases, removes separators (`-`, `_`, `.`)
+- **Amount+Date Matching**: Catches records with identical amounts and nearby dates
+- **Semantic Similarity**: Uses sentence-transformers (`all-MiniLM-L6-v2`) for AI-powered description matching
+- **Amount-Only Matching**: Safe fallback for unique amount values (with manual verification warnings)
+
+### Break Classification
+- `MATCHED` - Match found, amounts agree exactly
+- `BREAK` - Match found, but amounts differ (flags the delta)
+- `UNMATCHED_OURS` - In firm's book only (potential missing bank record)
+- `UNMATCHED_BANK` - In bank's book only (potential missing firm record)
+
+### Production Features
 - **Per-Client Organization**: Automatic folder structure with input/output/feedback/audit
 - **Audit Logging**: Every run logged with timestamp and match statistics
 - **Feedback System**: SQLite database for analyst overrides and confirmations
 - **Fully Offline**: No API calls, works entirely locally
+- **Configurable Pipeline**: Enable/disable matching strategies via config
 
 ## Installation
 
@@ -56,15 +81,128 @@ python reconcile.py --client bank_a --our-book our.csv --bank-book bank.csv --ou
 python reconcile.py --client bank_a --our-book our.csv --bank-book bank.csv --threshold 0.75
 ```
 
+## How It Works
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     reconcile.py (CLI Entry)                    │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  column_detector.py: Smart Column Detection                     │
+│  • Analyzes content patterns (uniqueness, data types, length)   │
+│  • Scores each column for ID/amount/description/date likelihood │
+│  • Falls back to name matching if needed                        │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  ingestion.py: Load & Normalize Data                            │
+│  • Load CSVs with pandas                                        │
+│  • Normalize IDs (strip, lowercase, remove separators)          │
+│  • Standardize column names                                     │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  matching.py: 5-Phase Matching Pipeline                         │
+│                                                                  │
+│  Phase 1: ID Matching                                           │
+│    ├─ Build normalized ID lookup table                          │
+│    ├─ Exact match on normalized IDs                             │
+│    └─ Check amounts: match → MATCHED, differ → BREAK            │
+│                                                                  │
+│  Phase 2: Amount + Date Matching                                │
+│    ├─ Find exact amount matches                                 │
+│    ├─ Score date proximity (0-1, linear decay over 7 days)      │
+│    └─ Take best date proximity match                            │
+│                                                                  │
+│  Phase 3: Semantic Matching (embedding.py)                      │
+│    ├─ Generate embeddings with sentence-transformers            │
+│    ├─ Compute cosine similarity matrix                          │
+│    ├─ Match if similarity > threshold (default 0.80)            │
+│    └─ Adjust score with date proximity if available             │
+│                                                                  │
+│  Phase 4: Amount-Only Matching                                  │
+│    ├─ Find exact amount matches                                 │
+│    ├─ Only if dates within 14-day window                        │
+│    ├─ Only if exactly ONE match (avoid ambiguity)               │
+│    └─ Flag with WARNING for manual verification                 │
+│                                                                  │
+│  Phase 5: Mark Unmatched                                        │
+│    └─ Flag all remaining records as UNMATCHED                   │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  output.py: Generate Reports                                    │
+│  • Write CSV with match results sorted by status                │
+│  • Append to audit log with statistics                          │
+│  • Print summary to console                                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Algorithms
+
+**1. ID Normalization** (`ingestion.py:12-30`)
+```python
+"TRD-001"  → "trd001"
+"TRD_001"  → "trd001"
+"TRD.001"  → "trd001"
+"trd 001"  → "trd001"
+```
+
+**2. Date Proximity Scoring** (`matching.py:80-99`)
+```python
+score = 1.0 - (days_diff / DATE_PROXIMITY_WINDOW)
+
+0 days apart   → score = 1.00
+1 day apart    → score = 0.86
+3 days apart   → score = 0.57
+7+ days apart  → score = 0.00
+```
+
+**3. Semantic Similarity** (`embedding.py`)
+- Uses `all-MiniLM-L6-v2` model (384-dimensional embeddings)
+- Cosine similarity between description embeddings
+- Threshold: 0.80 (configurable)
+
+**4. Amount Matching Logic**
+```python
+# Exact match required (within tolerance)
+if abs(amount1 - amount2) <= AMOUNT_TOLERANCE:  # $0.01
+    return MATCHED
+else:
+    return BREAK
+```
+
 ## Input File Format
 
-CSV files should contain columns for:
-- **Reference/Trade ID**: Any of `trade_id`, `ref_id`, `reference`, `transaction_id`, etc.
-- **Description**: Any of `description`, `narrative`, `details`, etc.
-- **Amount**: Any of `amount`, `value`, `total`, etc.
-- **Date** (optional): Any of `date`, `trade_date`, `transaction_date`, etc.
+CSV files can have **any column names** - the engine auto-detects them! Common patterns:
+- **Reference/Trade ID**: `trade_id`, `ref_id`, `reference`, `record_id`, `transaction_id`, `txn_id`, `id`
+- **Description**: `description`, `narrative`, `narration`, `details`, `notes`
+- **Amount**: `amount`, `value`, `total`, `amount_inr`, `sum`, `balance`
+- **Date** (optional): `date`, `trade_date`, `transaction_date`, `txn_date`, `booking_date`
 
-The engine automatically detects column names from the configured list.
+**Example files:**
+```csv
+# vendor_statement.csv
+record_id,date,party_name,narration,amount_inr,expense_type
+V001,2025-01-03,Tata Comm Ltd,Auto generated narration 1,187621,Infrastructure
+
+# bank_ledger.csv
+transaction_id,txn_date,vendor_name,description,amount,currency
+B001,2025-01-02,Amazon Web Services,Auto generated transaction 1,187621,INR
+```
+
+The engine will automatically detect:
+- `record_id` → ID
+- `amount_inr` → Amount
+- `date` → Date
+- `party_name` → Description
 
 ## Output Format
 
@@ -78,33 +216,46 @@ Sorted by status (breaks first, then unmatched, then matched).
 ## Project Structure
 
 ```
-reconcile.py          # CLI entrypoint
-config.py            # Configuration and constants
-ingestion.py         # CSV loading and ID normalization
-embedding.py         # Sentence transformer embeddings
-matching.py          # Core reconciliation logic
-output.py            # CSV output and audit logging
-feedback.py          # SQLite feedback storage
-requirements.txt     # Python dependencies
+reconcile.py          # CLI entrypoint - orchestrates the reconciliation flow
+config.py             # Configuration: thresholds, strategies, column patterns
+column_detector.py    # Smart column detection using content analysis (NEW!)
+ingestion.py          # CSV loading, column detection, ID normalization
+embedding.py          # Sentence transformer embeddings (all-MiniLM-L6-v2)
+matching.py           # 5-phase matching pipeline (ID → Amount+Date → Semantic → Amount-Only)
+output.py             # CSV generation, audit logging, summary statistics
+feedback.py           # SQLite database for analyst overrides
+requirements.txt      # Python dependencies
+
+sample_our_book.csv   # Sample vendor/firm data for testing
+sample_bank_book.csv  # Sample bank data for testing
 
 clients/
   {client_id}/
     input/           # Place input files here
-    output/          # Reconciliation reports
-    feedback.db      # Analyst feedback database
-    audit.log        # Audit trail
+    output/          # Reconciliation reports (CSV)
+    feedback.db      # Analyst feedback database (SQLite)
+    audit.log        # Audit trail (timestamped logs)
 ```
 
 ## Configuration
 
-Edit `config.py` to adjust:
+All settings in `config.py`:
 
+### Matching Strategy Controls
+- `ENABLE_AMOUNT_DATE_MATCHING` (default: True) - Enable Amount+Date matching phase
+- `ENABLE_AMOUNT_ONLY_MATCHING` (default: True) - Enable risky Amount-Only matching
 - `SEMANTIC_THRESHOLD` (default: 0.80) - Minimum similarity for semantic matches
-- `AMOUNT_TOLERANCE` (default: 0.01) - Tolerance for amount comparison
+- `AMOUNT_TOLERANCE` (default: 0.01) - Tolerance for amount comparison ($0.01)
+- `DATE_PROXIMITY_WINDOW` (default: 7 days) - Date matching window
+- `AMOUNT_ONLY_DATE_WINDOW` (default: 14 days) - Date window for amount-only matches
+
+### Column Name Patterns (for fallback detection)
 - `ID_FIELDS` - List of possible ID column names
 - `DESCRIPTION_FIELDS` - List of possible description column names
 - `AMOUNT_FIELDS` - List of possible amount column names
 - `DATE_FIELDS` - List of possible date column names
+
+**Note:** With smart column detection, you rarely need to edit these lists!
 
 ## ID Normalization
 

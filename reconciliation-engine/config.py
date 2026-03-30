@@ -15,7 +15,8 @@ ID_FIELDS = [
     "transaction_id",
     "txn_id",
     "id",
-    "reference_id"
+    "reference_id",
+    "record_id"
 ]
 
 # Possible column names for description fields
@@ -23,6 +24,7 @@ DESCRIPTION_FIELDS = [
     "description",
     "desc",
     "narrative",
+    "narration",
     "details",
     "notes"
 ]
@@ -33,7 +35,8 @@ AMOUNT_FIELDS = [
     "value",
     "total",
     "sum",
-    "balance"
+    "balance",
+    "amount_inr"
 ]
 
 # Possible column names for date fields (optional)
@@ -41,6 +44,7 @@ DATE_FIELDS = [
     "date",
     "trade_date",
     "transaction_date",
+    "txn_date",
     "value_date",
     "booking_date"
 ]
@@ -64,8 +68,15 @@ AMOUNT_TOLERANCE = 0.01  # $0.01 tolerance
 
 # Match type constants
 MATCH_TYPE_ID = "ID"
+MATCH_TYPE_AMOUNT_DATE = "AMOUNT+DATE"
+MATCH_TYPE_AMOUNT_ONLY = "AMOUNT_ONLY"
 MATCH_TYPE_SEMANTIC = "SEMANTIC"
 MATCH_TYPE_NONE = "NONE"
+
+# Matching strategy configuration
+ENABLE_AMOUNT_DATE_MATCHING = True  # Match by amount + date proximity
+ENABLE_AMOUNT_ONLY_MATCHING = True  # Match by amount only (risky, enables warnings)
+AMOUNT_ONLY_DATE_WINDOW = 14  # Only match by amount if dates are within N days
 
 # Status constants
 STATUS_MATCHED = "MATCHED"

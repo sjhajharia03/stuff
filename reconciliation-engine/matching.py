@@ -98,6 +98,152 @@ class ReconciliationEngine:
         # Linear decay: full score at 0 days, 0 score at window boundary
         return 1.0 - (days_diff / config.DATE_PROXIMITY_WINDOW)
 
+    def _find_amount_date_matches(
+        self,
+        our_book: pd.DataFrame,
+        bank_book: pd.DataFrame,
+        our_unmatched: list,
+        bank_unmatched: list
+    ) -> tuple[list[MatchResult], set, list]:
+        """
+        Phase 2: Match by amount + date proximity.
+        Returns (results, matched_bank_indices, still_unmatched_our_indices)
+        """
+        results = []
+        matched_bank_indices = set()
+        still_unmatched = []
+
+        if not config.ENABLE_AMOUNT_DATE_MATCHING:
+            return results, matched_bank_indices, our_unmatched
+
+        print("\nPhase 2: Amount + Date matching")
+        print("-" * 50)
+
+        for our_idx in our_unmatched:
+            our_row = our_book.loc[our_idx]
+            best_match_idx = None
+            best_date_score = 0
+
+            # Look for amount matches with good date proximity
+            for bank_idx in bank_unmatched:
+                if bank_idx in matched_bank_indices:
+                    continue
+
+                bank_row = bank_book.loc[bank_idx]
+
+                # Check if amounts match
+                if self._amounts_match(our_row['amount'], bank_row['amount']):
+                    # Check date proximity
+                    date_score = self._compute_date_proximity(our_row['date'], bank_row['date'])
+
+                    if date_score > best_date_score:
+                        best_date_score = date_score
+                        best_match_idx = bank_idx
+
+            # If found a good amount+date match
+            if best_match_idx is not None and best_date_score > 0:
+                bank_row = bank_book.loc[best_match_idx]
+                matched_bank_indices.add(best_match_idx)
+
+                result = MatchResult(
+                    our_index=our_idx,
+                    bank_index=best_match_idx,
+                    our_ref=our_row['id_raw'],
+                    bank_ref=bank_row['id_raw'],
+                    our_amount=our_row['amount'],
+                    bank_amount=bank_row['amount'],
+                    match_type=config.MATCH_TYPE_AMOUNT_DATE,
+                    status=config.STATUS_MATCHED,
+                    similarity_score=best_date_score,
+                    notes=f"Amount match with date proximity (score: {best_date_score:.3f})"
+                )
+                results.append(result)
+            else:
+                still_unmatched.append(our_idx)
+
+        print(f"Amount+Date matches found: {len(results)}")
+        return results, matched_bank_indices, still_unmatched
+
+    def _find_amount_only_matches(
+        self,
+        our_book: pd.DataFrame,
+        bank_book: pd.DataFrame,
+        our_unmatched: list,
+        bank_unmatched: list,
+        matched_bank_indices: set
+    ) -> tuple[list[MatchResult], set, list]:
+        """
+        Phase 4: Match by amount only (risky - only if dates are within window).
+        Returns (results, additional_matched_bank_indices, still_unmatched_our_indices)
+        """
+        results = []
+        additional_matched = set()
+        still_unmatched = []
+
+        if not config.ENABLE_AMOUNT_ONLY_MATCHING:
+            return results, additional_matched, our_unmatched
+
+        print("\nPhase 4: Amount-only matching (with date validation)")
+        print("-" * 50)
+
+        for our_idx in our_unmatched:
+            our_row = our_book.loc[our_idx]
+            amount_matches = []
+
+            # Find all amount matches
+            for bank_idx in bank_unmatched:
+                if bank_idx in matched_bank_indices:
+                    continue
+
+                bank_row = bank_book.loc[bank_idx]
+
+                if self._amounts_match(our_row['amount'], bank_row['amount']):
+                    # Check if dates are within acceptable window
+                    if not pd.isna(our_row['date']) and not pd.isna(bank_row['date']):
+                        days_diff = abs((our_row['date'] - bank_row['date']).days)
+                        if days_diff <= config.AMOUNT_ONLY_DATE_WINDOW:
+                            amount_matches.append((bank_idx, days_diff))
+                    else:
+                        # If no dates, allow match but warn
+                        amount_matches.append((bank_idx, None))
+
+            # If exactly one amount match, use it (with warning)
+            if len(amount_matches) == 1:
+                bank_idx, days_diff = amount_matches[0]
+                bank_row = bank_book.loc[bank_idx]
+                matched_bank_indices.add(bank_idx)
+                additional_matched.add(bank_idx)
+
+                if days_diff is not None:
+                    notes = f"SINGLE amount-only match (dates differ by {days_diff} days - VERIFY!)"
+                else:
+                    notes = "SINGLE amount-only match (no dates available - VERIFY!)"
+
+                result = MatchResult(
+                    our_index=our_idx,
+                    bank_index=bank_idx,
+                    our_ref=our_row['id_raw'],
+                    bank_ref=bank_row['id_raw'],
+                    our_amount=our_row['amount'],
+                    bank_amount=bank_row['amount'],
+                    match_type=config.MATCH_TYPE_AMOUNT_ONLY,
+                    status=config.STATUS_MATCHED,
+                    similarity_score=0.0,
+                    notes=notes
+                )
+                results.append(result)
+            elif len(amount_matches) > 1:
+                # Multiple amount matches - too risky, leave unmatched
+                still_unmatched.append(our_idx)
+            else:
+                still_unmatched.append(our_idx)
+
+        print(f"Amount-only matches found: {len(results)}")
+        if len(results) > 0:
+            print("⚠️  WARNING: Amount-only matches require manual verification!")
+
+        return results, additional_matched, still_unmatched
+
     def reconcile(self, our_book: pd.DataFrame, bank_book: pd.DataFrame) -> list[MatchResult]:
         """
         Perform full reconciliation between our book and bank book.
@@ -175,9 +321,21 @@ class ReconciliationEngine:
         print(f"ID matches found: {len(results)}")
         print(f"Our records without ID match: {len(our_unmatched_indices)}")
 
-        # Phase 2: Semantic matching for unmatched records
+        # Get unmatched bank records
+        bank_unmatched_indices = [idx for idx in bank_book.index if idx not in matched_bank_indices]
+
+        # Phase 2: Amount + Date matching
+        if our_unmatched_indices and bank_unmatched_indices:
+            amount_date_results, amount_date_matched, our_unmatched_indices = self._find_amount_date_matches(
+                our_book, bank_book, our_unmatched_indices, bank_unmatched_indices
+            )
+            results.extend(amount_date_results)
+            matched_bank_indices.update(amount_date_matched)
+            bank_unmatched_indices = [idx for idx in bank_book.index if idx not in matched_bank_indices]
+
+        # Phase 3: Semantic matching for remaining unmatched records
         if our_unmatched_indices:
-            print("\nPhase 2: Semantic matching")
+            print("\nPhase 3: Semantic matching")
             print("-" * 50)
 
             # Get unmatched bank records
@@ -246,41 +404,45 @@ class ReconciliationEngine:
 
                         # Remove from similarity matrix to prevent double matching
                         similarity_matrix[:, best_sim_idx] = -1
-                    else:
-                        # No semantic match above threshold
-                        result = MatchResult(
-                            our_index=our_idx,
-                            bank_index=None,
-                            our_ref=our_row['id_raw'],
-                            bank_ref=None,
-                            our_amount=our_row['amount'],
-                            bank_amount=None,
-                            match_type=config.MATCH_TYPE_NONE,
-                            status=config.STATUS_UNMATCHED_OURS,
-                            similarity_score=best_sim_score,
-                            notes=f"No match found (best similarity: {best_sim_score:.3f} < threshold {config.SEMANTIC_THRESHOLD})"
-                        )
-                        results.append(result)
-            else:
-                # No bank records left to match
-                for our_idx in our_unmatched_indices:
-                    our_row = our_book.loc[our_idx]
-                    result = MatchResult(
-                        our_index=our_idx,
-                        bank_index=None,
-                        our_ref=our_row['id_raw'],
-                        bank_ref=None,
-                        our_amount=our_row['amount'],
-                        bank_amount=None,
-                        match_type=config.MATCH_TYPE_NONE,
-                        status=config.STATUS_UNMATCHED_OURS,
-                        similarity_score=0.0,
-                        notes="No bank records available to match"
-                    )
-                    results.append(result)
+                    # Semantic matching happened for this record - either matched or not
+                    # If not matched above threshold, it will be tried in Phase 4
 
-        # Phase 3: Mark unmatched bank records
-        print("\nPhase 3: Identifying unmatched bank records")
+        # Phase 4: Amount-only matching (for records still unmatched)
+        # Collect indices of records that weren't matched by semantic
+        semantic_unmatched = []
+        for our_idx in our_unmatched_indices:
+            # Check if this record was matched by semantic
+            if not any(r.our_index == our_idx for r in results if r.match_type == config.MATCH_TYPE_SEMANTIC):
+                semantic_unmatched.append(our_idx)
+
+        bank_still_unmatched = [idx for idx in bank_book.index if idx not in matched_bank_indices]
+
+        if semantic_unmatched and bank_still_unmatched:
+            amount_only_results, amount_only_matched, final_unmatched = self._find_amount_only_matches(
+                our_book, bank_book, semantic_unmatched, bank_still_unmatched, matched_bank_indices
+            )
+            results.extend(amount_only_results)
+            matched_bank_indices.update(amount_only_matched)
+
+            # Mark remaining as unmatched
+            for our_idx in final_unmatched:
+                our_row = our_book.loc[our_idx]
+                result = MatchResult(
+                    our_index=our_idx,
+                    bank_index=None,
+                    our_ref=our_row['id_raw'],
+                    bank_ref=None,
+                    our_amount=our_row['amount'],
+                    bank_amount=None,
+                    match_type=config.MATCH_TYPE_NONE,
+                    status=config.STATUS_UNMATCHED_OURS,
+                    similarity_score=0.0,
+                    notes="No match found after all strategies"
+                )
+                results.append(result)
+
+        # Phase 5: Mark unmatched bank records
+        print("\nPhase 5: Identifying unmatched bank records")
         print("-" * 50)
 
         bank_unmatched_final = [idx for idx in bank_book.index if idx not in matched_bank_indices]

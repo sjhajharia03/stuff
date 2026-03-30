@@ -6,6 +6,7 @@ import pandas as pd
 import re
 from typing import Optional, List
 import config
+from column_detector import ColumnDetector
 
 
 def normalize_id(id_value: any) -> str:
@@ -63,13 +64,14 @@ def find_column(df: pd.DataFrame, possible_names: List[str], column_type: str) -
     return None
 
 
-def load_book(file_path: str, book_type: str) -> pd.DataFrame:
+def load_book(file_path: str, book_type: str, use_smart_detection: bool = True) -> pd.DataFrame:
     """
     Load a CSV book file and identify key columns.
 
     Args:
         file_path: Path to the CSV file
         book_type: Type of book ('our' or 'bank') for error messages
+        use_smart_detection: If True, use smart content-based column detection
 
     Returns:
         DataFrame with standardized column names
@@ -83,8 +85,23 @@ def load_book(file_path: str, book_type: str) -> pd.DataFrame:
     if df.empty:
         raise ValueError(f"{book_type} book is empty: {file_path}")
 
-    # Find ID column
-    id_col = find_column(df, config.ID_FIELDS, "ID")
+    # Try smart detection first
+    if use_smart_detection:
+        detector = ColumnDetector()
+        detected = detector.detect_columns(df, book_type)
+
+        id_col = detected['id']
+        desc_col = detected['description']
+        amount_col = detected['amount']
+        date_col = detected['date']
+    else:
+        # Fall back to name-based detection
+        id_col = find_column(df, config.ID_FIELDS, "ID")
+        desc_col = find_column(df, config.DESCRIPTION_FIELDS, "description")
+        amount_col = find_column(df, config.AMOUNT_FIELDS, "amount")
+        date_col = find_column(df, config.DATE_FIELDS, "date")
+
+    # Validate required columns
     if not id_col:
         raise ValueError(
             f"Could not find ID column in {book_type} book. "
@@ -92,8 +109,6 @@ def load_book(file_path: str, book_type: str) -> pd.DataFrame:
             f"Available columns: {', '.join(df.columns)}"
         )
 
-    # Find description column
-    desc_col = find_column(df, config.DESCRIPTION_FIELDS, "description")
     if not desc_col:
         raise ValueError(
             f"Could not find description column in {book_type} book. "
@@ -101,17 +116,12 @@ def load_book(file_path: str, book_type: str) -> pd.DataFrame:
             f"Available columns: {', '.join(df.columns)}"
         )
 
-    # Find amount column
-    amount_col = find_column(df, config.AMOUNT_FIELDS, "amount")
     if not amount_col:
         raise ValueError(
             f"Could not find amount column in {book_type} book. "
             f"Tried: {', '.join(config.AMOUNT_FIELDS)}. "
             f"Available columns: {', '.join(df.columns)}"
         )
-
-    # Find date column (optional)
-    date_col = find_column(df, config.DATE_FIELDS, "date")
 
     # Create standardized dataframe
     result = pd.DataFrame()
