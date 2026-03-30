@@ -1,0 +1,11 @@
+ref_id,narrative,value,transaction_date
+TRD001,Purchase of equity shares for client portfolio,15000.00,2024-01-15
+TRD002,Bond sale transaction municipal securities,25100.50,2024-01-16
+TRD004,Corporate bond purchase investment grade,12000.00,2024-01-18
+XYZ-999,Stock dividend reinvest program execution,3500.75,2024-01-19
+ABC-888,Derivative futures contract settlement,18500.00,2024-01-20
+TRD007,Equity trade sale of technology stocks,9200.00,2024-01-21
+TRD008,Real estate investment trust transaction,45000.00,2024-01-22
+TRD009,Currency exchange transaction GBP/USD,6750.25,2024-01-23
+TRD011,Options contract purchase equity derivatives,11000.00,2024-01-25
+TRD012,Commodities futures trade precious metals,8800.50,2024-01-26

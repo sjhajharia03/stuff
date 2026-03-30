@@ -1,0 +1,11 @@
+trade_id,description,amount,date
+TRD-001,Purchase of equity shares for client portfolio,15000.00,2024-01-15
+TRD_002,Bond sale transaction municipal securities,25000.50,2024-01-16
+TRD.003,Foreign exchange swap USD/EUR,8500.00,2024-01-17
+TRD-004,Corporate bond purchase investment grade,12000.00,2024-01-18
+TRD-005,Stock dividend reinvestment plan execution,3500.75,2024-01-19
+TRD-006,Derivative contract settlement futures,18000.00,2024-01-20
+TRD007,Equity trade sale of technology stocks,9200.00,2024-01-21
+TRD-008,Treasury bond purchase government securities,45000.00,2024-01-22
+TRD-009,Currency exchange transaction GBP/USD,6750.25,2024-01-23
+TRD-010,Mutual fund redemption client account,22000.00,2024-01-24
